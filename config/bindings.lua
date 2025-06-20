@@ -96,16 +96,10 @@ local keys = {
    {
       key = [[/]],
       mods = mod.SUPER_REV,
-      action = act.InputSelector({
-         title = 'Select Background',
-         choices = backdrops:choices(),
-         fuzzy = true,
-         fuzzy_description = 'Select Background: ',
-         action = wezterm.action_callback(function(window, _pane, idx)
-            ---@diagnostic disable-next-line: param-type-mismatch
-            backdrops:set_img(window, tonumber(idx))
-         end),
-      }),
+      action =  wezterm.action_callback(function(window, _pane)
+            require("utils.backdrops"):list_directories(window)
+         end
+      ),
    },
    {
       key = 'b',

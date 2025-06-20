@@ -44,10 +44,43 @@ end
 ---   This throws a coroutine error if the function is invoked in outside of `wezterm.lua` in the -
 ---   initial load of the Terminal config.
 function BackDrops:set_files()
-   self.files = wezterm.glob(wezterm.config_dir .. PATH_SEP .. 'backdrops' .. PATH_SEP .. GLOB_PATTERN)
-   wezterm.GLOBAL.background = self.files[1]
-   return self
+  local base_path = wezterm.config_dir .. PATH_SEP .. 'backdrops'
+  local all_files = {}
+
+  -- Helper to join and normalize paths
+  local function join(...)
+    return table.concat({...}, PATH_SEP)
+  end
+
+  if pcall(function() wezterm.read_dir(base_path) end) then
+   local entries = wezterm.read_dir(base_path)
+   for _, entry in ipairs(entries) do
+      local ok = pcall(function()
+         wezterm.read_dir(entry) -- just to test if it's a directory
+      end)
+
+      if ok then
+         -- entry is a directory
+         local sub_files = wezterm.glob(entry .. PATH_SEP .. GLOB_PATTERN)
+         for _, f in ipairs(sub_files) do
+         table.insert(all_files, f)
+         end
+      elseif entry:match('%.%a+$') then
+         -- image file directly in `backdrops/`
+         if entry:match(GLOB_PATTERN:gsub('[{}]', ''):gsub(',', '|')) then
+         table.insert(all_files, entry)
+         end
+      end
+   end
+  else
+   wezterm.log_info("'backdrops' directory not found")
+  end
+
+  self.files = all_files
+  wezterm.GLOBAL.background = self.files[1]
+  return self
 end
+
 
 ---Override the default `focus_color`
 ---Default `focus_color` is `colors.custom.background`
@@ -102,15 +135,16 @@ end
 ---Convert the `files` array to a table of `InputSelector` choices
 ---see: https://wezfurlong.org/wezterm/config/lua/keyassignment/InputSelector.html
 function BackDrops:choices()
-   local choices = {}
-   for idx, file in ipairs(self.files) do
-      local name = file:match('([^' .. PATH_SEP .. ']+)$')
-      table.insert(choices, {
-         id = tostring(idx),
-         label = name,
-      })
-   end
-   return choices
+  local choices = {}
+  local base = wezterm.config_dir .. PATH_SEP .. 'backdrops' .. PATH_SEP
+  for idx, file in ipairs(self.files) do
+    local rel_path = file:sub(#base + 1) -- strip base path
+    table.insert(choices, {
+      id = tostring(idx),
+      label = rel_path,
+    })
+  end
+  return choices
 end
 
 ---Select a random file and redefine the global `wezterm.GLOBAL.background` variable
@@ -175,4 +209,60 @@ function BackDrops:toggle_focus(window)
    end
 end
 
-return BackDrops:init()
+local instance = BackDrops:init()
+function BackDrops:list_directories(window)
+  local base_path = wezterm.config_dir .. PATH_SEP .. 'backdrops'
+  local dirs = {}
+
+  for _, entry in ipairs(wezterm.read_dir(base_path)) do
+    if pcall(wezterm.read_dir, entry) then
+      local label = entry:sub(#base_path + 2) -- relative dir name
+      table.insert(dirs, {
+        id = label,
+        label = label,
+      })
+    end
+  end
+
+  window:perform_action(wezterm.action.InputSelector {
+    action = wezterm.action_callback(function(win, _pane, selected)
+      if selected then
+        local full_path = base_path .. PATH_SEP .. selected
+        self:list_images_in(win, full_path)
+      end
+    end),
+    title = "Choose a folder",
+    choices = dirs,
+  }, window:active_pane())
+end
+
+function BackDrops:list_images_in(window, dir_path)
+  local files = wezterm.glob(dir_path .. PATH_SEP .. GLOB_PATTERN)
+  if #files == 0 then
+    wezterm.log_info("No images found in: " .. dir_path)
+    return
+  end
+
+  local choices = {}
+  for _, f in ipairs(files) do
+    local label = f:match("([^" .. PATH_SEP .. "]+)$")
+    table.insert(choices, { id = f, label = label })
+  end
+
+  window:perform_action(wezterm.action.InputSelector {
+    action = wezterm.action_callback(function(win, _pane, selected)
+      if selected then
+        self:set_file_path(win, selected)
+      end
+    end),
+    title = "Choose an image",
+    choices = choices,
+  }, window:active_pane())
+end
+
+function BackDrops:set_file_path(window, path)
+  wezterm.GLOBAL.background = path
+  self:_set_opt(window)
+end
+
+return instance
